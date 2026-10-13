@@ -1,0 +1,10 @@
+{
+  "id": "kanban-flow",
+  "name": "Kanban Flow",
+  "version": "1.0.0",
+  "minAppVersion": "1.4.0",
+  "description": "Kanban boards stored in plain markdown notes, with drag-and-drop lists and cards and quick task entry that understands dates, times, #tags and @contexts.",
+  "author": "Your Name",
+  "authorUrl": "https://github.com/your-username",
+  "isDesktopOnly": false
+}
