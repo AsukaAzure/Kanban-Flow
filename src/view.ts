@@ -4,7 +4,8 @@ import {
 	Board, Card, CardInfo, Lane, Priority, advanceRepeat, composeCard, isoDate, newCard, parseBoard,
 	parseCard, serializeBoard, takeTokens, todayISO, uid,
 } from "./parser";
-import { ArchiveModal, ConfirmModal, PromptModal, TaskData, TaskModal } from "./modals";
+import { ArchiveModal, ConfirmModal, PromptModal, ShortcutsModal, TaskData, TaskModal, TaskModalOptions } from "./modals";
+import { applyTagColor } from "./utils";
 import type { KanbanSettings } from "./settings";
 
 export const VIEW_TYPE = "kanban-flow-view";
@@ -16,17 +17,17 @@ const nowHM = (): string => {
 	return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
 };
 
-function isOverdue(info: CardInfo): boolean {
+export function isOverdue(info: CardInfo): boolean {
 	if (!info.date) return false;
 	const t = todayISO();
 	return info.date < t || (info.date === t && !!info.time && info.time < nowHM());
 }
 
-function formatTime(time: string, s: KanbanSettings): string {
+export function formatTime(time: string, s: KanbanSettings): string {
 	return moment(time, "HH:mm").format(s.timeFormat === "12h" ? "h:mm A" : "HH:mm");
 }
 
-function formatDue(date: string, time: string | undefined, s: KanbanSettings): string {
+export function formatDue(date: string, time: string | undefined, s: KanbanSettings): string {
 	const diff = moment(date, "YYYY-MM-DD").diff(moment().startOf("day"), "days");
 	let label = moment(date, "YYYY-MM-DD").format(s.dateFormat);
 	if (s.relativeDates) {
@@ -49,6 +50,7 @@ export class KanbanView extends TextFileView implements HoverParent {
 	private calMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
 	private calDrag: string | null = null;
 	private openSubs = new Set<string>();
+	private selected: string | null = null;
 	private filterTimer = 0;
 	private touching = false;
 	private touchSince = 0;
@@ -72,13 +74,7 @@ export class KanbanView extends TextFileView implements HoverParent {
 		this.contentEl.tabIndex = -1;
 		this.addAction("file-text", "Open as markdown", () => void this.plugin.openAsMarkdown(this.leaf));
 		this.addAction("plus", "Add task", () => this.openCreate());
-		this.registerDomEvent(this.contentEl, "keydown", (e: KeyboardEvent) => {
-			if ((e.target as HTMLElement).closest("input, textarea, select")) return;
-			if (!(e.ctrlKey || e.metaKey)) return;
-			const k = e.key.toLowerCase();
-			if (k === "z") { e.preventDefault(); if (e.shiftKey) this.redo(); else this.undo(); }
-			else if (k === "y") { e.preventDefault(); this.redo(); }
-		});
+		this.registerDomEvent(this.contentEl, "keydown", (e: KeyboardEvent) => this.onKey(e));
 	}
 
 	getViewData(): string { return serializeBoard(this.board); }
@@ -186,7 +182,7 @@ export class KanbanView extends TextFileView implements HoverParent {
 		const filterEl = this.renderToolbar();
 		if (refocus) { filterEl.focus(); filterEl.setSelectionRange(caret, caret); }
 
-		if (this.mode === "calendar") { this.renderCalendar(); return; }
+		if (this.mode === "calendar") { this.renderCalendar(); this.restoreFocus(); return; }
 
 		const board = this.contentEl.createDiv("kb-board");
 		board.style.setProperty("--kb-lane-width", `${s.laneWidth}px`);
@@ -194,6 +190,7 @@ export class KanbanView extends TextFileView implements HoverParent {
 		if (!this.board.lanes.length) board.createDiv({ cls: "kb-hint", text: "No lists yet. Click “+ Add list” to start." });
 		this.setupLaneDnd(board);
 		board.scrollLeft = left;
+		this.restoreFocus();
 	}
 
 	private setIconOrText(el: HTMLElement, name: string, fallback: string): void {
@@ -357,6 +354,7 @@ export class KanbanView extends TextFileView implements HoverParent {
 		el.draggable = true;
 		if (info.priority) el.addClass(`kb-prio-${info.priority}`);
 		if (done) el.addClass("is-done");
+		if (this.selected === card.id) el.addClass("is-selected");
 
 		const top = el.createDiv("kb-card-top");
 		const titleEl = top.createDiv("kb-card-title");
@@ -420,7 +418,7 @@ export class KanbanView extends TextFileView implements HoverParent {
 			if (showTags) {
 				const row = meta.createDiv("kb-meta-row");
 				row.createSpan({ cls: "kb-meta-label", text: "tags:" });
-				info.tags.forEach((t) => row.createSpan({ cls: "kb-tag", text: t }));
+				info.tags.forEach((t) => applyTagColor(row.createSpan({ cls: "kb-tag", text: t }), t, s));
 			}
 			if (showCtx) {
 				const row = meta.createDiv("kb-meta-row");
@@ -432,6 +430,7 @@ export class KanbanView extends TextFileView implements HoverParent {
 		el.addEventListener("click", (e) => {
 			if (Date.now() < this.suppressClick) return;
 			if ((e.target as HTMLElement).closest("a, input, label, .kb-icon-btn, .kb-subs-list")) return;
+			this.select(card.id, false);
 			this.openEdit(lane, card);
 		});
 		el.addEventListener("contextmenu", (e) => {
@@ -813,9 +812,19 @@ export class KanbanView extends TextFileView implements HoverParent {
 
 	/* ------------------------------------------------------------ tasks */
 
-	private modalBase(): { lanes: { id: string; title: string }[]; sourcePath: string; tags: string[]; contexts: string[] } {
+	private modalBase(): Pick<TaskModalOptions, "lanes" | "sourcePath" | "tags" | "contexts" | "templates" | "onSaveTemplate"> {
 		const { tags, contexts } = this.collect();
-		return { lanes: this.board.lanes.map((l) => ({ id: l.id, title: l.title })), sourcePath: this.file?.path ?? "", tags, contexts };
+		return {
+			lanes: this.board.lanes.map((l) => ({ id: l.id, title: l.title })),
+			sourcePath: this.file?.path ?? "",
+			tags,
+			contexts,
+			templates: this.plugin.settings.templates,
+			onSaveTemplate: (t) => {
+				this.plugin.settings.templates.push({ id: uid(), ...t });
+				void this.plugin.saveData(this.plugin.settings);
+			},
+		};
 	}
 
 	openCreate(laneId?: string): void {
@@ -863,6 +872,144 @@ export class KanbanView extends TextFileView implements HoverParent {
 				this.commit();
 			},
 		}).open();
+	}
+
+	/* ------------------------------------------------------------ keyboard */
+
+	private selectedCard(): { lane: Lane; card: Card; index: number } | null {
+		if (!this.selected) return null;
+		for (const lane of this.board.lanes) {
+			const index = lane.cards.findIndex((c) => c.id === this.selected);
+			if (index >= 0) return { lane, card: lane.cards[index], index };
+		}
+		return null;
+	}
+
+	private select(id: string | null, scroll = true): void {
+		this.selected = id;
+		this.contentEl.querySelectorAll(".kb-card.is-selected").forEach((n) => n.removeClass("is-selected"));
+		if (!id) return;
+		const el = this.contentEl.querySelector<HTMLElement>(`.kb-card[data-id="${id}"]`);
+		el?.addClass("is-selected");
+		if (scroll) el?.scrollIntoView({ block: "nearest", inline: "nearest" });
+	}
+
+	private restoreFocus(): void {
+		const doc = this.contentEl.ownerDocument;
+		const active = doc.activeElement;
+		if ((!active || active === doc.body) && this.app.workspace.getActiveViewOfType(KanbanView) === this) {
+			this.contentEl.focus({ preventScroll: true });
+		}
+	}
+
+	private moveSelection(dx: number, dy: number): void {
+		const cols = this.board.lanes
+			.filter((l) => !l.collapsed)
+			.map((l) => ({ lane: l, cards: l.cards.filter((c) => this.matches(c, l)) }))
+			.filter((c) => c.cards.length);
+		if (!cols.length) return;
+		let ci = cols.findIndex((c) => c.cards.some((x) => x.id === this.selected));
+		if (ci < 0) { this.select(cols[0].cards[0].id); return; }
+		let ri = cols[ci].cards.findIndex((x) => x.id === this.selected);
+		if (dy) ri = Math.max(0, Math.min(cols[ci].cards.length - 1, ri + dy));
+		if (dx) {
+			ci = Math.max(0, Math.min(cols.length - 1, ci + dx));
+			ri = Math.min(ri, cols[ci].cards.length - 1);
+		}
+		this.select(cols[ci].cards[ri].id);
+	}
+
+	/** Alt + arrows: reorder within a list, or move to the neighbouring list. */
+	private shiftCard(sel: { lane: Lane; card: Card; index: number }, dx: number, dy: number): void {
+		const { lane, card, index } = sel;
+		if (dy) {
+			const j = index + dy;
+			if (j < 0 || j >= lane.cards.length) return;
+			lane.cards.splice(index, 1);
+			lane.cards.splice(j, 0, card);
+			this.commit();
+			return;
+		}
+		const to = this.board.lanes[this.board.lanes.indexOf(lane) + dx];
+		if (!to) return;
+		lane.cards.splice(index, 1);
+		to.cards.splice(Math.min(index, to.cards.length), 0, card);
+		this.handleRecurrence(to, card);
+		this.commit();
+	}
+
+	private removeSelected(sel: { lane: Lane; card: Card; index: number }, archive: boolean): void {
+		const { lane, card, index } = sel;
+		const neighbour = lane.cards[index + 1] ?? lane.cards[index - 1];
+		lane.cards = lane.cards.filter((c) => c !== card);
+		if (archive) this.board.archive.push(card);
+		this.selected = neighbour?.id ?? null;
+		this.commit();
+	}
+
+	private onKey(e: KeyboardEvent): void {
+		const t = e.target as HTMLElement;
+		if (t.closest("input, textarea, select")) return;
+		const raw = e.key;
+		if (e.ctrlKey || e.metaKey) {
+			const lk = raw.toLowerCase();
+			if (lk === "z") { e.preventDefault(); if (e.shiftKey) this.redo(); else this.undo(); }
+			else if (lk === "y") { e.preventDefault(); this.redo(); }
+			return;
+		}
+		const sel = this.selectedCard();
+		if (e.altKey) {
+			if (this.mode !== "board" || !sel) return;
+			const dirs: Record<string, [number, number]> = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] };
+			const d = dirs[raw];
+			if (d) { e.preventDefault(); this.shiftCard(sel, d[0], d[1]); }
+			return;
+		}
+		const k = raw.length === 1 ? raw.toLowerCase() : raw;
+		let handled = true;
+		switch (k) {
+			case "n": this.openCreate(sel?.lane.id); break;
+			case "l": this.openAddList(); break;
+			case "/": this.contentEl.querySelector<HTMLInputElement>(".kb-filter")?.focus(); break;
+			case "b": this.mode = "board"; this.render(); break;
+			case "c": this.mode = "calendar"; this.render(); break;
+			case "?": new ShortcutsModal(this.app).open(); break;
+			case "ArrowUp": if (this.mode === "board") this.moveSelection(0, -1); else handled = false; break;
+			case "ArrowDown": if (this.mode === "board") this.moveSelection(0, 1); else handled = false; break;
+			case "ArrowLeft": if (this.mode === "board") this.moveSelection(-1, 0); else handled = false; break;
+			case "ArrowRight": if (this.mode === "board") this.moveSelection(1, 0); else handled = false; break;
+			case "e": if (sel) this.openEdit(sel.lane, sel.card); else handled = false; break;
+			case "Enter": if (sel && !t.closest("button")) this.openEdit(sel.lane, sel.card); else handled = false; break;
+			case "a": if (sel) this.removeSelected(sel, true); else handled = false; break;
+			case "Delete":
+			case "Backspace": if (sel) this.removeSelected(sel, false); else handled = false; break;
+			case "1": if (sel) this.setPriority(sel.card, "high"); else handled = false; break;
+			case "2": if (sel) this.setPriority(sel.card, "medium"); else handled = false; break;
+			case "3": if (sel) this.setPriority(sel.card, "low"); else handled = false; break;
+			case "0": if (sel) this.setPriority(sel.card, undefined); else handled = false; break;
+			case "Escape":
+				if (this.filterText || this.quick) { this.filterText = ""; this.quick = ""; this.render(); }
+				else if (this.selected) this.select(null);
+				else handled = false;
+				break;
+			default: handled = false;
+		}
+		if (handled) e.preventDefault();
+	}
+
+	/** Used by the agenda: show a board and highlight one card. */
+	focusCard(text: string): void {
+		for (const lane of this.board.lanes) {
+			const card = lane.cards.find((c) => c.text === text);
+			if (!card) continue;
+			this.filterText = "";
+			this.quick = "";
+			this.mode = "board";
+			this.selected = card.id;
+			this.render();
+			this.contentEl.querySelector<HTMLElement>(`.kb-card[data-id="${card.id}"]`)?.scrollIntoView({ block: "center", inline: "center" });
+			return;
+		}
 	}
 
 	private setPriority(card: Card, p: Priority | undefined): void {

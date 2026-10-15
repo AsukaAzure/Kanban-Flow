@@ -1,5 +1,6 @@
 import { App, FuzzySuggestModal, Modal, Notice, TFile, setIcon } from "obsidian";
-import { Card, Priority, Sub, composeCard, extractSchedule, parseCard, takeTokens, todayISO } from "./parser";
+import { Card, Priority, Sub, composeCard, extractSchedule, isoDate, nextRepeatDate, parseCard, takeTokens, todayISO } from "./parser";
+import type { TaskTemplate } from "./settings";
 
 export interface TaskData { laneId: string; text: string; desc: string; subs: Sub[] }
 
@@ -14,6 +15,8 @@ export interface TaskModalOptions {
 	sourcePath: string;
 	tags: string[];
 	contexts: string[];
+	templates: TaskTemplate[];
+	onSaveTemplate: (t: { name: string; text: string; desc: string; subs: Sub[] }) => void;
 	onSubmit: (data: TaskData) => void;
 }
 
@@ -104,6 +107,7 @@ export class TaskModal extends Modal {
 		this.titleEl.setText(opts.heading);
 		const init = takeTokens(opts.text);
 		const subs: Sub[] = opts.subs.map((s) => ({ ...s }));
+		const auto = { d: false, t: false, p: false, r: false };
 
 		const wrap = contentEl.createDiv("kb-ta-wrap");
 		const ta = wrap.createEl("textarea", {
@@ -123,6 +127,7 @@ export class TaskModal extends Modal {
 		};
 		const linkBtn = iconBtn("link", "Link a note", "Note");
 		const siteBtn = iconBtn("globe", "Link a website", "Web");
+		const tplBtn = iconBtn("bookmark", "Save as template", "Tpl");
 
 		const fields = contentEl.createDiv("kb-fields");
 		const field = (label: string, wide = false): HTMLElement => {
@@ -130,6 +135,15 @@ export class TaskModal extends Modal {
 			f.createEl("label", { text: label });
 			return f;
 		};
+		if (!opts.text && opts.templates.length) {
+			const tSel = field("Template", true).createEl("select", { cls: "dropdown" });
+			tSel.createEl("option", { value: "", text: "None" });
+			opts.templates.forEach((t) => tSel.createEl("option", { value: t.id, text: t.name }));
+			tSel.onchange = () => {
+				const t = opts.templates.find((x) => x.id === tSel.value);
+				if (t) applyTemplate(t);
+			};
+		}
 		const laneSel = field("List").createEl("select", { cls: "dropdown" });
 		for (const l of opts.lanes) laneSel.createEl("option", { value: l.id, text: l.title });
 		laneSel.value = opts.laneId;
@@ -140,6 +154,20 @@ export class TaskModal extends Modal {
 		dateIn.value = init.date ?? "";
 		const timeIn = field("Time").createEl("input", { type: "time" });
 		timeIn.value = init.time ?? "";
+		const quickRow = field("Quick date", true).createDiv("kb-quick-dates");
+		const quick = (label: string, days: number | null): void => {
+			const b = quickRow.createEl("button", { cls: "kb-qd", text: label, attr: { type: "button" } });
+			b.onclick = () => {
+				auto.d = false;
+				if (days === null) { dateIn.value = ""; timeIn.value = ""; auto.t = false; }
+				else { const d = new Date(); d.setDate(d.getDate() + days); dateIn.value = isoDate(d); }
+				refresh();
+			};
+		};
+		quick("Today", 0);
+		quick("Tomorrow", 1);
+		quick("Next week", 7);
+		quick("Clear", null);
 		const repeatSel = field("Repeat", true).createEl("select", { cls: "dropdown" });
 		REPEATS.forEach(([v, l]) => repeatSel.createEl("option", { value: v, text: l }));
 		if (init.repeat) ensureOption(repeatSel, init.repeat);
@@ -198,7 +226,6 @@ export class TaskModal extends Modal {
 		};
 
 		// Values filled in from typed text are cleared again when that text is removed.
-		const auto = { d: false, t: false, p: false, r: false };
 		const sync = (key: "d" | "t" | "p" | "r", val: string | undefined, set: (v: string) => void): void => {
 			if (val) { set(val); auto[key] = true; }
 			else if (auto[key]) { set(""); auto[key] = false; }
@@ -219,6 +246,40 @@ export class TaskModal extends Modal {
 			if (repeatSel.value && !dateIn.value) dateIn.value = todayISO();
 			refresh();
 		});
+
+		const applyTemplate = (t: TaskTemplate): void => {
+			const tk = takeTokens(t.text);
+			ta.value = tk.text;
+			prioSel.value = tk.priority ?? "";
+			if (tk.repeat) {
+				ensureOption(repeatSel, tk.repeat);
+				repeatSel.value = tk.repeat;
+				if (!dateIn.value) dateIn.value = isoDate(nextRepeatDate(tk.repeat, new Date(), false));
+			} else repeatSel.value = "";
+			descTa.value = t.desc;
+			subs.splice(0, subs.length, ...t.subs.map((x) => ({ text: x.text, done: false })));
+			renderSubs();
+			auto.p = false;
+			auto.r = false;
+			refresh();
+			ta.focus();
+		};
+
+		tplBtn.onclick = () => {
+			const b = build();
+			const tk = takeTokens(b.text);
+			if (!tk.text) { new Notice("Write something for the task first."); return; }
+			new PromptModal(this.app, "Save as template", "Template name", "Save", (name) => {
+				if (!name) return;
+				opts.onSaveTemplate({
+					name,
+					text: composeCard(tk.text, undefined, undefined, tk.priority, tk.repeat),
+					desc: descTa.value.trim(),
+					subs: subs.filter((x) => x.text.trim()).map((x) => ({ text: x.text.trim(), done: false })),
+				});
+				new Notice("Template saved.");
+			}, b.title).open();
+		};
 
 		const submit = (): void => {
 			const b = build();
@@ -369,6 +430,37 @@ export class ArchiveModal extends Modal {
 		const footer = el.createDiv("kb-task-footer");
 		const clear = footer.createEl("button", { text: "Delete all", cls: "mod-warning" });
 		clear.onclick = () => { this.onClear(); this.draw(); };
+	}
+	onClose(): void { this.contentEl.empty(); }
+}
+
+export class ShortcutsModal extends Modal {
+	onOpen(): void {
+		this.titleEl.setText("Keyboard shortcuts");
+		const rows: [string, string][] = [
+			["N", "New task (in the selected card's list)"],
+			["L", "New list"],
+			["/", "Go to the filter box"],
+			["B  /  C", "Board view  /  Calendar view"],
+			["↑ ↓ ← →", "Select a card"],
+			["Enter  or  E", "Edit the selected card"],
+			["1  2  3", "Set priority high / medium / low"],
+			["0", "Clear priority"],
+			["A", "Archive the selected card"],
+			["Delete", "Delete the selected card"],
+			["Alt + ↑ ↓ ← →", "Move the selected card"],
+			["Ctrl/Cmd + Z", "Undo"],
+			["Ctrl/Cmd + Shift + Z", "Redo"],
+			["Esc", "Clear the filter, then the selection"],
+			["?", "Show this list"],
+		];
+		const table = this.contentEl.createEl("table", { cls: "kb-shortcuts" });
+		for (const [keys, what] of rows) {
+			const tr = table.createEl("tr");
+			tr.createEl("td").createEl("kbd", { text: keys });
+			tr.createEl("td", { text: what });
+		}
+		this.contentEl.createEl("p", { cls: "kb-hint", text: "Shortcuts work while the board is focused and you are not typing in a field." });
 	}
 	onClose(): void { this.contentEl.empty(); }
 }

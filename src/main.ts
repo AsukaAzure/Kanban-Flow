@@ -4,6 +4,8 @@ import {
 } from "obsidian";
 import { DEFAULT_SETTINGS, KanbanSettings, KanbanSettingTab } from "./settings";
 import { KanbanView, VIEW_TYPE } from "./view";
+import { AGENDA_TYPE, AgendaView } from "./agenda";
+import { ShortcutsModal } from "./modals";
 import { isBoard, newBoardText, parseBoard, parseCard } from "./parser";
 
 const SLASH_COMMAND = "create-kanban";
@@ -17,11 +19,13 @@ export default class KanbanFlowPlugin extends Plugin {
 		await this.loadSettings();
 
 		this.registerView(VIEW_TYPE, (leaf) => new KanbanView(leaf, this));
+		this.registerView(AGENDA_TYPE, (leaf) => new AgendaView(leaf, this));
 		this.registerHoverLinkSource(VIEW_TYPE, { display: "Kanban Flow", defaultMod: true });
 		this.addSettingTab(new KanbanSettingTab(this.app, this));
 		this.registerEditorSuggest(new SlashSuggest(this.app, this));
 
 		this.addRibbonIcon("layout-dashboard", "Create new kanban board", () => void this.createBoardFile());
+		this.addRibbonIcon("list-checks", "Open kanban agenda (all boards)", () => void this.openAgenda());
 
 		this.addCommand({
 			id: "create-board-file",
@@ -34,6 +38,20 @@ export default class KanbanFlowPlugin extends Plugin {
 			editorCheckCallback: (checking, editor, ctx) => {
 				if (!(ctx instanceof MarkdownView)) return false;
 				if (!checking) void this.insertBoard(editor, ctx);
+				return true;
+			},
+		});
+		this.addCommand({
+			id: "open-agenda",
+			name: "Open agenda (all boards)",
+			callback: () => void this.openAgenda(),
+		});
+		this.addCommand({
+			id: "show-shortcuts",
+			name: "Show keyboard shortcuts",
+			checkCallback: (checking) => {
+				if (!this.app.workspace.getActiveViewOfType(KanbanView)) return false;
+				if (!checking) new ShortcutsModal(this.app).open();
 				return true;
 			},
 		});
@@ -151,6 +169,8 @@ export default class KanbanFlowPlugin extends Plugin {
 	async loadSettings(): Promise<void> {
 		this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
 		this.settings.notified = Array.isArray(this.settings.notified) ? this.settings.notified : [];
+		this.settings.tagColors = { ...(this.settings.tagColors ?? {}) };
+		this.settings.templates = Array.isArray(this.settings.templates) ? this.settings.templates : [];
 	}
 
 	async saveSettings(): Promise<void> {
@@ -181,6 +201,30 @@ export default class KanbanFlowPlugin extends Plugin {
 		const file = (leaf.view as KanbanView).file;
 		if (file) this.markdownOverride.add(file.path);
 		await leaf.setViewState({ type: "markdown", state: leaf.view.getState(), active: true });
+	}
+
+	/* ---------------- agenda ---------------- */
+
+	async openAgenda(): Promise<void> {
+		const existing = this.app.workspace.getLeavesOfType(AGENDA_TYPE)[0];
+		if (existing) { void this.app.workspace.revealLeaf(existing); return; }
+		const leaf = this.app.workspace.getLeaf("tab");
+		await leaf.setViewState({ type: AGENDA_TYPE, active: true });
+		void this.app.workspace.revealLeaf(leaf);
+	}
+
+	/** Opens a board and highlights one card (used by the agenda). */
+	async openBoardAt(path: string, cardText: string): Promise<void> {
+		const file = this.app.vault.getAbstractFileByPath(path);
+		if (!(file instanceof TFile)) return;
+		let leaf = this.app.workspace.getLeavesOfType(VIEW_TYPE).find((l) => l.view instanceof KanbanView && l.view.file?.path === path);
+		if (!leaf) {
+			leaf = this.app.workspace.getLeaf("tab");
+			await leaf.openFile(file);
+			await this.switchToKanban(leaf);
+		}
+		void this.app.workspace.revealLeaf(leaf);
+		if (leaf.view instanceof KanbanView) leaf.view.focusCard(cardText);
 	}
 
 	/* ---------------- creating boards ---------------- */

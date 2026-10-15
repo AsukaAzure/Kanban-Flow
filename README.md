@@ -22,6 +22,12 @@ Works on desktop and mobile.
 - **Convert a card to a note**, keeping its tags and date and leaving a link behind.
 - **Autocomplete** for `[[notes]]`, `#tags` and `@contexts` while typing.
 - **Hover preview** for `[[note links]]` on cards.
+- **Keyboard shortcuts** to add, select, edit, move and prioritise cards without the mouse.
+- **Quick date buttons** (Today, Tomorrow, Next week, Clear) in the task dialog.
+- **Task templates** for tasks you create again and again, with their tags, notes, subtasks and repeat.
+- **Tag colours** so important tags stand out.
+- **Agenda across all boards.** One list of every dated task from every board, grouped by Overdue, Today, Tomorrow and so on.
+- **Nothing is lost.** Text in a board note that is not part of the board is kept when the board is saved.
 
 ## Installation
 
@@ -79,6 +85,8 @@ Notes on parsing:
 - A bare time such as `3:15` is read as **3:15 PM**. Write `03:15` for the morning, or `3:15am`.
 - The date and time pickers fill in as you type. If you delete the words, the values they filled in are cleared again.
 - The dialog also has a list picker, priority, repeat, a notes box and subtasks. Use the link icons to insert a note link or a web link.
+- **Quick date** buttons set Today, Tomorrow or Next week in one tap. **Clear** removes the date and time.
+- The **Template** menu (shown when you have templates) fills the dialog from a saved template. The bookmark icon saves the current task as a template.
 - Type `[[` to search your notes, or `#` / `@` to reuse tags and contexts already on the board.
 
 ### Tags versus contexts
@@ -108,6 +116,46 @@ Add a repeat to a task (for example `every monday`). When you move that card int
 
 If a task has a time, a notice appears when it is due (or the chosen number of minutes before). Reminders only fire while Obsidian is open, and each one shows once. A reminder is identified by the note, task title, date and time, so editing other details of a card does not trigger it again.
 
+## Keyboard shortcuts
+
+Shortcuts work while the board is focused and you are not typing in a field. Click a card (or press an arrow key) to select one. Press `?` in the board to see this list.
+
+| Key | Action |
+| --- | --- |
+| `N` | New task (in the selected card's list) |
+| `L` | New list |
+| `/` | Go to the filter box |
+| `B` / `C` | Board view / Calendar view |
+| `↑` `↓` `←` `→` | Select a card |
+| `Enter` or `E` | Edit the selected card |
+| `1` `2` `3` | Set priority high, medium or low |
+| `0` | Clear priority |
+| `A` | Archive the selected card |
+| `Delete` | Delete the selected card (use undo if needed) |
+| `Alt` + arrows | Move the selected card within or between lists |
+| `Ctrl/Cmd` + `Z` | Undo |
+| `Ctrl/Cmd` + `Shift` + `Z` (or `Ctrl/Cmd` + `Y`) | Redo |
+| `Esc` | Clear the filter, then the selection |
+| `?` | Show the shortcut list |
+
+## Templates
+
+Create a task the way you want it (title, tags, priority, repeat, notes, subtasks), then click the bookmark icon in the task dialog and give it a name. Next time you create a task, pick it from the **Template** menu. Dates are not saved in templates; a template with a repeat sets the first due date for you. Delete templates under **Settings → Kanban Flow → Task templates**.
+
+## Tag colours
+
+Give a tag a colour under **Settings → Kanban Flow → Tag colours**: type the tag name (without `#`), pick a colour and press Add. The tag then appears in that colour on cards and in the agenda.
+
+## Agenda (all boards)
+
+Run **Open agenda (all boards)** or use the list icon in the ribbon. The agenda gathers every task from every board in your vault and groups them as Overdue, Today, Tomorrow, Next 7 days and Later.
+
+- Use the filter box (`text`, `#tag`, `@context`, `prio:high`, or a board or list name).
+- Toggle **completed tasks** and **tasks without a date** with the two buttons in the toolbar. Both are off by default.
+- Click a task to open its board with that card highlighted.
+- Tasks in your Done list are hidden unless you show completed tasks.
+- The agenda updates automatically as you edit boards.
+
 ## Commands
 
 | Command | Description |
@@ -117,6 +165,8 @@ If a task has a time, a notice appears when it is due (or the chosen number of m
 | Add task to current board | Opens the new task dialog |
 | Undo last board change / Redo board change | Step back or forward through changes |
 | Toggle between board and markdown view | Switches the current note between views |
+| Open agenda (all boards) | Opens the agenda of tasks from every board |
+| Show keyboard shortcuts | Shows the shortcut list while a board is open |
 
 Assign hotkeys to any of these under **Settings → Hotkeys**.
 
@@ -135,6 +185,8 @@ Assign hotkeys to any of these under **Settings → Hotkeys**.
 | List width | Width of lists on the board |
 | Open links in a new tab | For note links inside cards |
 | Confirm before deleting | Ask before deleting a list that has cards |
+| Tag colours | Choose a colour for individual tags |
+| Task templates | View and delete saved templates |
 
 ## Board file format
 
@@ -167,10 +219,11 @@ kanban-plugin: board
 - `📅` is the due date, `⏰` the time, `🔁` the repeat rule, and `⏫` / `🔼` / `🔽` the priority (high, medium, low). These match the icons used by the Tasks plugin.
 - List options are stored in a `<!-- kanban: ... -->` comment under the list heading.
 - Archived cards are stored after the `***` line under `## Archive`.
+- Any other text in the note (an introduction above the lists, a paragraph inside a list) is kept. Text inside a list is written back directly under that list's heading, above its cards.
 
 ## Known limitations
 
-- Only list headings (`##`), card lines and their indented details are kept. **Any other text in a board note is removed when the board is saved**, so keep extra writing in a separate note.
+- Extra text inside a list is moved to just under that list's heading when the board is saved.
 - Reminders need Obsidian to be running.
 - Very large boards redraw completely after each change, which may feel slow with many hundreds of cards.
 
@@ -188,6 +241,8 @@ Copy `main.js`, `manifest.json` and `styles.css` into a test vault's `.obsidian/
 - `view.ts`: board and calendar views, drag and drop, menus
 - `modals.ts`: task dialog, autocomplete and other dialogs
 - `settings.ts`: settings and settings tab
+- `agenda.ts`: the all-boards agenda view
+- `utils.ts`: small shared helpers (icons, tag colours)
 - `main.ts`: plugin entry, commands, slash command and reminders
 
 ### Releasing

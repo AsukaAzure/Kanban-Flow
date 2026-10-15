@@ -1,5 +1,8 @@
 import { App, PluginSettingTab, Setting } from "obsidian";
 import type KanbanFlowPlugin from "./main";
+import type { Sub } from "./parser";
+
+export interface TaskTemplate { id: string; name: string; text: string; desc: string; subs: Sub[] }
 
 export interface KanbanSettings {
 	defaultLists: string;
@@ -19,6 +22,8 @@ export interface KanbanSettings {
 	reminders: boolean;
 	reminderLead: number;
 	notified: string[];
+	tagColors: Record<string, string>;
+	templates: TaskTemplate[];
 }
 
 export const DEFAULT_SETTINGS: KanbanSettings = {
@@ -39,6 +44,8 @@ export const DEFAULT_SETTINGS: KanbanSettings = {
 	reminders: true,
 	reminderLead: 0,
 	notified: [],
+	tagColors: {},
+	templates: [],
 };
 
 export class KanbanSettingTab extends PluginSettingTab {
@@ -145,5 +152,47 @@ export class KanbanSettingTab extends PluginSettingTab {
 			.setName("Confirm before deleting")
 			.setDesc("Ask before deleting a list that contains cards.")
 			.addToggle((t) => t.setValue(s.confirmDelete).onChange(async (v) => { s.confirmDelete = v; await save(); }));
+
+		new Setting(containerEl).setName("Tag colours").setHeading();
+
+		let newTag = "";
+		let newColor = "#8b6cef";
+		new Setting(containerEl)
+			.setName("Add a tag colour")
+			.setDesc("Type the tag name without the #. Tags without a colour use the default style.")
+			.addText((t) => t.setPlaceholder("errands").onChange((v) => { newTag = v.replace(/^#/, "").trim().toLowerCase(); }))
+			.addColorPicker((c) => c.setValue(newColor).onChange((v) => { newColor = v; }))
+			.addButton((b) => b.setButtonText("Add").onClick(async () => {
+				if (!newTag) return;
+				s.tagColors[newTag] = newColor;
+				await save();
+				this.display();
+			}));
+		for (const [tag, color] of Object.entries(s.tagColors).sort()) {
+			new Setting(containerEl)
+				.setName(`#${tag}`)
+				.addColorPicker((c) => c.setValue(color).onChange(async (v) => { s.tagColors[tag] = v; await save(); }))
+				.addExtraButton((b) => b.setIcon("trash").setTooltip("Remove").onClick(async () => {
+					delete s.tagColors[tag];
+					await save();
+					this.display();
+				}));
+		}
+
+		new Setting(containerEl).setName("Task templates").setHeading();
+		if (!s.templates.length) {
+			containerEl.createEl("p", { cls: "setting-item-description", text: "No templates yet. In the task dialog, use the bookmark button to save the current task as a template." });
+		}
+		for (const t of s.templates) {
+			const parts = [t.subs.length ? `${t.subs.length} subtasks` : "", t.desc ? "notes" : ""].filter(Boolean).join(", ");
+			new Setting(containerEl)
+				.setName(t.name)
+				.setDesc(`${t.text}${parts ? ` (${parts})` : ""}`)
+				.addExtraButton((b) => b.setIcon("trash").setTooltip("Delete template").onClick(async () => {
+					s.templates = s.templates.filter((x) => x.id !== t.id);
+					await save();
+					this.display();
+				}));
+		}
 	}
 }

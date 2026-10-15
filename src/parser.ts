@@ -3,8 +3,8 @@
 export type Priority = "high" | "medium" | "low";
 export interface Sub { text: string; done: boolean }
 export interface Card { id: string; text: string; checked: boolean; desc: string; subs: Sub[] }
-export interface Lane { id: string; title: string; cards: Card[]; limit?: number; collapsed?: boolean }
-export interface Board { lanes: Lane[]; archive: Card[]; frontmatter?: string }
+export interface Lane { id: string; title: string; cards: Card[]; limit?: number; collapsed?: boolean; extra?: string }
+export interface Board { lanes: Lane[]; archive: Card[]; frontmatter?: string; preamble?: string; archiveExtra?: string }
 export interface CardInfo { title: string; date?: string; time?: string; priority?: Priority; repeat?: string; tags: string[]; contexts: string[] }
 
 let counter = 0;
@@ -43,15 +43,32 @@ export function parseBoard(content: string): Board {
 	const body = fm ? content.slice(fm[0].length) : content;
 	const lanes: Lane[] = [];
 	const archive: Card[] = [];
+	const pre: string[] = [];
+	const archExtra: string[] = [];
+	const laneExtra = new Map<Lane, string[]>();
 	let cur: Lane | null = null;
 	let last: Card | null = null;
 	let inArchive = false;
+
+	// Anything we do not recognise is kept (never dropped) and written back on save.
+	const stray = (line: string): void => {
+		const bucket = cur ? (laneExtra.get(cur) as string[]) : inArchive ? archExtra : pre;
+		const blank = !line.trim();
+		if (blank && (!bucket.length || !bucket[bucket.length - 1].trim())) return;
+		bucket.push(line);
+		if (!blank) last = null;
+	};
+
 	for (const line of body.split(/\r?\n/)) {
 		if (/^\*\*\*\s*$/.test(line)) { inArchive = true; cur = null; last = null; continue; }
 		const h = /^##\s+(.*)$/.exec(line);
 		if (h) {
 			last = null;
-			if (!inArchive) { cur = { id: uid(), title: h[1].trim(), cards: [] }; lanes.push(cur); }
+			if (!inArchive) {
+				cur = { id: uid(), title: h[1].trim(), cards: [] };
+				lanes.push(cur);
+				laneExtra.set(cur, []);
+			}
 			continue;
 		}
 		const meta = /^<!--\s*kanban:(.*?)-->\s*$/.exec(line.trim());
@@ -71,10 +88,20 @@ export function parseBoard(content: string): Board {
 			continue;
 		}
 		const d = /^(?:\t| {2,})(\S.*)$/.exec(line);
-		if (d && last) last.desc += (last.desc ? "\n" : "") + d[1];
+		if (d && last) { last.desc += (last.desc ? "\n" : "") + d[1]; continue; }
+		stray(line);
+	}
+
+	const join = (a: string[]): string => {
+		while (a.length && !a[a.length - 1].trim()) a.pop();
+		return a.join("\n");
+	};
+	for (const l of lanes) {
+		const t = join(laneExtra.get(l) as string[]);
+		if (t) l.extra = t;
 	}
 	const frontmatter = fm ? (fm[0].endsWith("\n") ? fm[0] : fm[0] + "\n") : undefined;
-	return { lanes, archive, frontmatter };
+	return { lanes, archive, frontmatter, preamble: join(pre) || undefined, archiveExtra: join(archExtra) || undefined };
 }
 
 const oneLine = (s: string): string => s.replace(/\s*\n\s*/g, " ");
@@ -88,16 +115,19 @@ function cardLines(c: Card): string {
 
 export function serializeBoard(b: Board): string {
 	let out = (b.frontmatter ?? DEFAULT_FRONTMATTER) + "\n";
+	if (b.preamble) out += `${b.preamble}\n\n`;
 	for (const l of b.lanes) {
 		out += `## ${l.title}\n`;
 		const opts = [l.limit ? `limit=${l.limit}` : "", l.collapsed ? "collapsed=1" : ""].filter(Boolean).join(" ");
 		if (opts) out += `<!-- kanban: ${opts} -->\n`;
 		out += "\n";
+		if (l.extra) out += `${l.extra}\n\n`;
 		for (const c of l.cards) out += cardLines(c);
 		out += "\n";
 	}
-	if (b.archive.length) {
+	if (b.archive.length || b.archiveExtra) {
 		out += "***\n\n## Archive\n\n";
+		if (b.archiveExtra) out += `${b.archiveExtra}\n\n`;
 		for (const c of b.archive) out += cardLines(c);
 	}
 	return out.trimEnd() + "\n";
