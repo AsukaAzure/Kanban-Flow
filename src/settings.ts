@@ -17,6 +17,7 @@ export interface KanbanSettings {
 	openLinksInNewTab: boolean;
 	autoOpenBoards: boolean;
 	confirmDelete: boolean;
+	cardClick: "details" | "edit";
 	doneList: string;
 	weekStart: "monday" | "sunday";
 	reminders: boolean;
@@ -39,6 +40,7 @@ export const DEFAULT_SETTINGS: KanbanSettings = {
 	openLinksInNewTab: false,
 	autoOpenBoards: true,
 	confirmDelete: true,
+	cardClick: "details",
 	doneList: "Done",
 	weekStart: "monday",
 	reminders: true,
@@ -99,6 +101,12 @@ export class KanbanSettingTab extends PluginSettingTab {
 				.onChange(async (v) => { s.weekStart = v as "monday" | "sunday"; await save(); }));
 
 		new Setting(containerEl).setName("Cards").setHeading();
+
+		new Setting(containerEl)
+			.setName("Clicking a card opens")
+			.setDesc("The full details page (with history), or straight into the edit dialog.")
+			.addDropdown((d) => d.addOption("details", "Details page").addOption("edit", "Edit dialog").setValue(s.cardClick)
+				.onChange(async (v) => { s.cardClick = v as "details" | "edit"; await save(); }));
 
 		new Setting(containerEl)
 			.setName("Add new cards to")

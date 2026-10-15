@@ -5,8 +5,8 @@ import {
 import { DEFAULT_SETTINGS, KanbanSettings, KanbanSettingTab } from "./settings";
 import { KanbanView, VIEW_TYPE } from "./view";
 import { AGENDA_TYPE, AgendaView } from "./agenda";
-import { ShortcutsModal } from "./modals";
-import { isBoard, newBoardText, parseBoard, parseCard } from "./parser";
+import { ShortcutsModal, TaskRef } from "./modals";
+import { isBoard, newBid, newBoardText, parseBoard, parseCard, serializeBoard } from "./parser";
 
 const SLASH_COMMAND = "create-kanban";
 
@@ -213,8 +213,8 @@ export default class KanbanFlowPlugin extends Plugin {
 		void this.app.workspace.revealLeaf(leaf);
 	}
 
-	/** Opens a board and highlights one card (used by the agenda). */
-	async openBoardAt(path: string, cardText: string): Promise<void> {
+	/** Opens a board and highlights one card, found by its text or its block id. */
+	async openBoardAt(path: string, match: { text?: string; bid?: string }): Promise<void> {
 		const file = this.app.vault.getAbstractFileByPath(path);
 		if (!(file instanceof TFile)) return;
 		let leaf = this.app.workspace.getLeavesOfType(VIEW_TYPE).find((l) => l.view instanceof KanbanView && l.view.file?.path === path);
@@ -224,7 +224,49 @@ export default class KanbanFlowPlugin extends Plugin {
 			await this.switchToKanban(leaf);
 		}
 		void this.app.workspace.revealLeaf(leaf);
-		if (leaf.view instanceof KanbanView) leaf.view.focusCard(cardText);
+		if (leaf.view instanceof KanbanView) leaf.view.focusCard(match);
+	}
+
+	/** Follows a link like [[Board#^id]] to the task it points at. */
+	async openTaskLink(linkpath: string, bid: string, sourcePath: string): Promise<void> {
+		const file = linkpath ? this.app.metadataCache.getFirstLinkpathDest(linkpath, sourcePath) : this.app.vault.getAbstractFileByPath(sourcePath);
+		if (!(file instanceof TFile)) { new Notice("That board was not found."); return; }
+		await this.openBoardAt(file.path, { bid });
+	}
+
+	/** Every task on every board (the open board is read from memory so unsaved changes are included). */
+	async collectTasks(current?: KanbanView): Promise<TaskRef[]> {
+		const out: TaskRef[] = [];
+		for (const file of this.app.vault.getMarkdownFiles()) {
+			if (!this.app.metadataCache.getFileCache(file)?.frontmatter?.["kanban-plugin"]) continue;
+			const board = current && current.file?.path === file.path ? current.board : parseBoard(await this.app.vault.cachedRead(file));
+			for (const lane of board.lanes) {
+				for (const card of lane.cards) {
+					out.push({ path: file.path, board: file.basename, lane: lane.title, title: parseCard(card.text).title || "Untitled", text: card.text, bid: card.bid, cardId: card.id });
+				}
+			}
+		}
+		return out;
+	}
+
+	/** Adds a block id to a task in another board's file so it can be linked to. */
+	async ensureBlockId(path: string, text: string): Promise<string | null> {
+		const file = this.app.vault.getAbstractFileByPath(path);
+		if (!(file instanceof TFile)) return null;
+		let id = null as string | null;
+		await this.app.vault.process(file, (data) => {
+			const board = parseBoard(data);
+			for (const lane of board.lanes) {
+				for (const card of lane.cards) {
+					if (card.text !== text) continue;
+					if (!card.bid) card.bid = newBid();
+					id = card.bid;
+					return serializeBoard(board);
+				}
+			}
+			return data;
+		});
+		return id;
 	}
 
 	/* ---------------- creating boards ---------------- */

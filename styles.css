@@ -262,3 +262,21 @@
 .kb-ag-due { flex: 0 0 auto; font-size: var(--font-ui-smaller); color: var(--text-muted); white-space: nowrap; }
 .kb-ag-due.is-overdue { color: var(--color-red); }
 .kb-ag-empty { padding: 24px 4px; }
+
+/* =====================  one-line notes, detail page  ===================== */
+.kb-view .kb-card-desc { display: block; -webkit-line-clamp: unset; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+.kb-detail-modal { width: min(560px, 94vw); }
+.kb-detail-title { font-size: var(--font-ui-large); font-weight: 600; line-height: 1.3; margin: 4px 0 14px; overflow-wrap: anywhere; }
+.kb-detail-rows { display: flex; flex-direction: column; gap: 6px; }
+.kb-detail-row { display: flex; align-items: baseline; gap: 12px; font-size: var(--font-ui-small); }
+.kb-detail-row .kb-meta-label { flex: 0 0 7.5em; }
+.kb-detail-value { display: flex; flex-wrap: wrap; gap: 4px 6px; color: var(--text-normal); text-transform: none; }
+.kb-detail-value.is-overdue { color: var(--color-red); }
+.kb-detail-section { margin-top: 18px; display: flex; flex-direction: column; gap: 4px; }
+.kb-detail-h { font-size: var(--font-ui-smaller); font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 2px; }
+.kb-detail-notes { overflow-wrap: anywhere; line-height: 1.5; }
+.kb-detail-link a { color: var(--link-color); text-decoration: none; }
+.kb-detail-event { display: flex; justify-content: space-between; gap: 12px; padding: 5px 0; border-bottom: 1px solid var(--background-modifier-border); font-size: var(--font-ui-small); }
+.kb-detail-event-time { color: var(--text-faint); white-space: nowrap; }
+.kb-detail-modal a, .kb-detail-modal a.internal-link { color: var(--link-color); text-decoration: none; cursor: pointer; }

@@ -12,7 +12,9 @@ Works on desktop and mobile.
 - **Your own lists.** Add, rename, reorder, sort, collapse, archive and delete lists. Set an optional card limit per list.
 - **Drag and drop.** Move cards within and between lists, and drag a whole list by its header. On touch screens, press and hold briefly, then drag.
 - **Natural-language quick entry.** Dates, times, priority, repeats, `#tags`, `@contexts` and links are picked up as you type.
-- **Task details.** Multi-line notes and subtasks with a progress count. Tick subtasks directly on the card.
+- **Task details page.** Click a card to see everything about it: fields, full notes, subtasks you can tick, linked tasks and a history of when it was created and moved between lists.
+- **Link tasks to each other**, even across boards. Linked tasks are clickable and jump straight to the other task.
+- **Compact cards.** Long notes show as a single line on the card and expand on the details page. Subtasks show as a progress count that you can expand.
 - **Filter and search.** Free text plus quick filters (overdue, today, this week, priority, any tag or context).
 - **Calendar view.** All dated tasks on a month grid. Drag a task to another day to reschedule.
 - **Repeating tasks.** Move a repeating card to your Done list and the next one is created for you.
@@ -98,7 +100,7 @@ Both show on the card and can be used to filter the board.
 
 ## Working with the board
 
-- **Edit a task:** click the card. **More actions:** the `⋯` button (or right-click on desktop) gives priority, duplicate, convert to note, archive, move to another list and delete.
+- **Open a task:** click the card to open its details page (or change this to open the edit dialog in the settings). Use **Edit** on the details page to change it. **More actions:** the `⋯` button (or right-click on desktop) gives priority, duplicate, convert to note, archive, move to another list and delete.
 - **Lists:** double-click a title to rename it. The `⋯` menu on a list has collapse, card limit, sort by due date, move left or right, archive all cards and delete.
 - **Card limit:** the count turns red when a list goes over its limit.
 - **Filter:** type in the search bar (`#tag`, `@context`, `due:today`, `due:overdue`, `due:week`, `prio:high`, or plain text) or use the funnel icon for quick filters.
@@ -116,6 +118,23 @@ Add a repeat to a task (for example `every monday`). When you move that card int
 
 If a task has a time, a notice appears when it is due (or the chosen number of minutes before). Reminders only fire while Obsidian is open, and each one shows once. A reminder is identified by the note, task title, date and time, so editing other details of a card does not trigger it again.
 
+## Task details and history
+
+Click a card to open its details page. It shows the list, due date, priority, repeat, tags and contexts, the full notes, the subtasks (tick them right there), any linked tasks, and a **History** of what happened to the task:
+
+- when it was created and in which list
+- every move between lists, with the date and time
+- when it was archived or restored
+- "In list since", the time it entered its current list
+
+History is recorded from the moment you start using this version. Older tasks start with an empty history. Press **Edit** on the page to change the task. In **Settings → Kanban Flow → Clicking a card opens** you can choose the edit dialog instead.
+
+## Linking tasks
+
+In the task dialog, click the **link** icon with two chain links (Link a task), search for a task on any board, and pick it. A link such as `[[Project board#^kb4f9k2x|Fix login bug]]` is added to the task. Click it on the card or on the details page to open that board with the linked task highlighted.
+
+Under the hood the target task gets a short block id at the end of its line (for example `^kb4f9k2x`). Because this is standard Obsidian block syntax, you can also link to a task from any other note.
+
 ## Keyboard shortcuts
 
 Shortcuts work while the board is focused and you are not typing in a field. Click a card (or press an arrow key) to select one. Press `?` in the board to see this list.
@@ -127,7 +146,8 @@ Shortcuts work while the board is focused and you are not typing in a field. Cli
 | `/` | Go to the filter box |
 | `B` / `C` | Board view / Calendar view |
 | `↑` `↓` `←` `→` | Select a card |
-| `Enter` or `E` | Edit the selected card |
+| `Enter` | Open the selected card's details |
+| `E` | Edit the selected card |
 | `1` `2` `3` | Set priority high, medium or low |
 | `0` | Clear priority |
 | `A` | Archive the selected card |
@@ -184,6 +204,7 @@ Assign hotkeys to any of these under **Settings → Hotkeys**.
 | Show on cards | Toggle due date, tags and contexts |
 | List width | Width of lists on the board |
 | Open links in a new tab | For note links inside cards |
+| Clicking a card opens | The details page or the edit dialog |
 | Confirm before deleting | Ask before deleting a list that has cards |
 | Tag colours | Choose a colour for individual tags |
 | Task templates | View and delete saved templates |
@@ -200,10 +221,11 @@ kanban-plugin: board
 ## To do
 <!-- kanban: limit=3 collapsed=1 -->
 
-- [ ] Buy groceries #errands @home ⏫ 📅 2026-10-11 ⏰ 15:00 🔁 every week
+- [ ] Buy groceries #errands @home ⏫ 📅 2026-10-11 ⏰ 15:00 🔁 every week ^kb4f9k2x
   Notes go on indented lines
   - [x] a subtask
   - [ ] another subtask
+  <!-- kb|2026-10-11T10:20|created||To do -->
 
 ## Done
 
@@ -217,6 +239,8 @@ kanban-plugin: board
 - Each `##` heading is a list, and each `- [ ]` line is a card.
 - Indented lines under a card are its notes. Indented `- [ ]` lines are its subtasks.
 - `📅` is the due date, `⏰` the time, `🔁` the repeat rule, and `⏫` / `🔼` / `🔽` the priority (high, medium, low). These match the icons used by the Tasks plugin.
+- A trailing `^id` is the task's block id, used for links to the task.
+- `<!-- kb|time|event|from|to -->` lines under a card are its history. They are hidden in reading view.
 - List options are stored in a `<!-- kanban: ... -->` comment under the list heading.
 - Archived cards are stored after the `***` line under `## Archive`.
 - Any other text in the note (an introduction above the lists, a paragraph inside a list) is kept. Text inside a list is written back directly under that list's heading, above its cards.

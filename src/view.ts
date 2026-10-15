@@ -1,42 +1,17 @@
-import { HoverParent, HoverPopover, Menu, Notice, TextFileView, WorkspaceLeaf, moment, normalizePath, setIcon } from "obsidian";
+import { HoverParent, HoverPopover, Menu, Notice, TFile, TextFileView, WorkspaceLeaf, moment, normalizePath, setIcon } from "obsidian";
 import type KanbanFlowPlugin from "./main";
 import {
-	Board, Card, CardInfo, Lane, Priority, advanceRepeat, composeCard, isoDate, newCard, parseBoard,
+	Board, Card, CardInfo, Lane, Priority, advanceRepeat, composeCard, isoDate, logEvent, newBid, newCard, parseBoard,
 	parseCard, serializeBoard, takeTokens, todayISO, uid,
 } from "./parser";
-import { ArchiveModal, ConfirmModal, PromptModal, ShortcutsModal, TaskData, TaskModal, TaskModalOptions } from "./modals";
-import { applyTagColor } from "./utils";
+import { ArchiveModal, ConfirmModal, PromptModal, ShortcutsModal, TaskData, TaskModal, TaskModalOptions, TaskPickerModal, TaskRef } from "./modals";
+import { applyTagColor, formatDue, formatTime, isOverdue } from "./utils";
+import { TaskDetailModal } from "./detail";
 import type { KanbanSettings } from "./settings";
 
 export const VIEW_TYPE = "kanban-flow-view";
 
 type Drag = { kind: "card"; cardId: string } | { kind: "lane"; laneId: string };
-
-const nowHM = (): string => {
-	const d = new Date();
-	return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
-};
-
-export function isOverdue(info: CardInfo): boolean {
-	if (!info.date) return false;
-	const t = todayISO();
-	return info.date < t || (info.date === t && !!info.time && info.time < nowHM());
-}
-
-export function formatTime(time: string, s: KanbanSettings): string {
-	return moment(time, "HH:mm").format(s.timeFormat === "12h" ? "h:mm A" : "HH:mm");
-}
-
-export function formatDue(date: string, time: string | undefined, s: KanbanSettings): string {
-	const diff = moment(date, "YYYY-MM-DD").diff(moment().startOf("day"), "days");
-	let label = moment(date, "YYYY-MM-DD").format(s.dateFormat);
-	if (s.relativeDates) {
-		if (diff === 0) label = "Today";
-		else if (diff === 1) label = "Tomorrow";
-		else if (diff === -1) label = "Yesterday";
-	}
-	return time ? `${label}, ${formatTime(time, s)}` : label;
-}
 
 export class KanbanView extends TextFileView implements HoverParent {
 	hoverPopover: HoverPopover | null = null;
@@ -365,7 +340,7 @@ export class KanbanView extends TextFileView implements HoverParent {
 
 		if (card.desc) {
 			const d = el.createDiv("kb-card-desc");
-			card.desc.split("\n").forEach((line) => this.renderInline(d.createDiv(), line));
+			this.renderInline(d, card.desc.replace(/\s*\n\s*/g, " "));
 		}
 		if (card.subs.length) {
 			const doneN = card.subs.filter((x) => x.done).length;
@@ -431,7 +406,7 @@ export class KanbanView extends TextFileView implements HoverParent {
 			if (Date.now() < this.suppressClick) return;
 			if ((e.target as HTMLElement).closest("a, input, label, .kb-icon-btn, .kb-subs-list")) return;
 			this.select(card.id, false);
-			this.openEdit(lane, card);
+			this.openCard(lane, card);
 		});
 		el.addEventListener("contextmenu", (e) => {
 			e.preventDefault();
@@ -481,9 +456,11 @@ export class KanbanView extends TextFileView implements HoverParent {
 						sourcePath: this.file?.path ?? "",
 					});
 				});
+				const task = /^(.*)#\^([A-Za-z0-9-]+)$/.exec(target);
 				a.onclick = (e) => {
 					e.preventDefault();
 					e.stopPropagation();
+					if (task) { void this.plugin.openTaskLink(task[1], task[2], this.file?.path ?? ""); return; }
 					void this.app.workspace.openLinkText(target, this.file?.path ?? "", this.plugin.settings.openLinksInNewTab);
 				};
 			} else {
@@ -785,7 +762,10 @@ export class KanbanView extends TextFileView implements HoverParent {
 		if (!moved || !to) { this.render(); return; }
 		const idx = anchorId ? to.cards.findIndex((c) => c.id === anchorId) : -1;
 		to.cards.splice(idx < 0 ? to.cards.length : idx, 0, moved);
-		if (from !== to) this.handleRecurrence(to, moved);
+		if (from !== to) {
+			logEvent(moved, "moved", from?.title, to.title);
+			this.handleRecurrence(to, moved);
+		}
 		this.commit();
 	}
 
@@ -804,7 +784,9 @@ export class KanbanView extends TextFileView implements HoverParent {
 		if (!next) return;
 		const target = this.board.lanes.find((l) => !this.isDone(l));
 		if (!target) return;
-		target.cards.push(newCard(next, card.desc, card.subs.map((s) => ({ text: s.text, done: false }))));
+		const fresh = newCard(next, card.desc, card.subs.map((s) => ({ text: s.text, done: false })));
+		logEvent(fresh, "created", undefined, target.title);
+		target.cards.push(fresh);
 		const t = takeTokens(card.text);
 		card.text = composeCard(t.text, t.date, t.time, t.priority);
 		new Notice(`Next occurrence added to ${target.title}: ${takeTokens(next).date}`);
@@ -812,13 +794,14 @@ export class KanbanView extends TextFileView implements HoverParent {
 
 	/* ------------------------------------------------------------ tasks */
 
-	private modalBase(): Pick<TaskModalOptions, "lanes" | "sourcePath" | "tags" | "contexts" | "templates" | "onSaveTemplate"> {
+	private modalBase(): Pick<TaskModalOptions, "lanes" | "sourcePath" | "tags" | "contexts" | "templates" | "onSaveTemplate" | "onPickTask"> {
 		const { tags, contexts } = this.collect();
 		return {
 			lanes: this.board.lanes.map((l) => ({ id: l.id, title: l.title })),
 			sourcePath: this.file?.path ?? "",
 			tags,
 			contexts,
+			onPickTask: (insert) => void this.openTaskPicker(insert),
 			templates: this.plugin.settings.templates,
 			onSaveTemplate: (t) => {
 				this.plugin.settings.templates.push({ id: uid(), ...t });
@@ -841,11 +824,59 @@ export class KanbanView extends TextFileView implements HoverParent {
 				const lane = this.board.lanes.find((l) => l.id === d.laneId);
 				if (!lane) return;
 				const card = newCard(d.text, d.desc, d.subs);
+				logEvent(card, "created", undefined, lane.title);
 				if (this.plugin.settings.newCardPosition === "top") lane.cards.unshift(card);
 				else lane.cards.push(card);
 				this.commit();
 			},
 		}).open();
+	}
+
+	private openCard(lane: Lane, card: Card): void {
+		if (this.plugin.settings.cardClick === "edit") this.openEdit(lane, card);
+		else this.openDetail(lane, card);
+	}
+
+	private openDetail(lane: Lane, card: Card): void {
+		new TaskDetailModal(this.app, {
+			lane,
+			card,
+			done: this.isDone(lane),
+			settings: this.plugin.settings,
+			renderText: (el, text) => this.renderInline(el, text),
+			onEdit: () => this.openEdit(lane, card),
+			onToggleSub: (i, done) => {
+				const sub = card.subs[i];
+				if (!sub) return;
+				sub.done = done;
+				this.commit();
+			},
+		}).open();
+	}
+
+	private async openTaskPicker(insert: (link: string) => void): Promise<void> {
+		const refs = await this.plugin.collectTasks(this);
+		new TaskPickerModal(this.app, refs, (ref) => {
+			void this.linkFor(ref).then((link) => { if (link) insert(link); });
+		}).open();
+	}
+
+	/** Gives the target task a block id if it has none, and returns a link to it. */
+	private async linkFor(ref: TaskRef): Promise<string | null> {
+		let bid = ref.bid;
+		if (ref.path === this.file?.path) {
+			const hit = this.board.lanes.flatMap((l) => l.cards).find((c) => c.id === ref.cardId);
+			if (hit) {
+				if (!hit.bid) { hit.bid = newBid(); this.commit(); }
+				bid = hit.bid;
+			}
+		} else if (!bid) {
+			bid = (await this.plugin.ensureBlockId(ref.path, ref.text)) ?? undefined;
+		}
+		const file = this.app.vault.getAbstractFileByPath(ref.path);
+		if (!bid || !(file instanceof TFile)) { new Notice("Could not link to that task."); return null; }
+		const link = this.app.metadataCache.fileToLinktext(file, this.file?.path ?? "");
+		return `[[${link}#^${bid}|${ref.title.replace(/[[\]|]/g, " ")}]]`;
 	}
 
 	private openEdit(lane: Lane, card: Card): void {
@@ -866,6 +897,7 @@ export class KanbanView extends TextFileView implements HoverParent {
 					if (to) {
 						lane.cards = lane.cards.filter((c) => c !== card);
 						to.cards.push(card);
+						logEvent(card, "moved", lane.title, to.title);
 						this.handleRecurrence(to, card);
 					}
 				}
@@ -934,6 +966,7 @@ export class KanbanView extends TextFileView implements HoverParent {
 		if (!to) return;
 		lane.cards.splice(index, 1);
 		to.cards.splice(Math.min(index, to.cards.length), 0, card);
+		logEvent(card, "moved", lane.title, to.title);
 		this.handleRecurrence(to, card);
 		this.commit();
 	}
@@ -942,7 +975,7 @@ export class KanbanView extends TextFileView implements HoverParent {
 		const { lane, card, index } = sel;
 		const neighbour = lane.cards[index + 1] ?? lane.cards[index - 1];
 		lane.cards = lane.cards.filter((c) => c !== card);
-		if (archive) this.board.archive.push(card);
+		if (archive) { logEvent(card, "archived", lane.title); this.board.archive.push(card); }
 		this.selected = neighbour?.id ?? null;
 		this.commit();
 	}
@@ -979,7 +1012,7 @@ export class KanbanView extends TextFileView implements HoverParent {
 			case "ArrowLeft": if (this.mode === "board") this.moveSelection(-1, 0); else handled = false; break;
 			case "ArrowRight": if (this.mode === "board") this.moveSelection(1, 0); else handled = false; break;
 			case "e": if (sel) this.openEdit(sel.lane, sel.card); else handled = false; break;
-			case "Enter": if (sel && !t.closest("button")) this.openEdit(sel.lane, sel.card); else handled = false; break;
+			case "Enter": if (sel && !t.closest("button")) this.openCard(sel.lane, sel.card); else handled = false; break;
 			case "a": if (sel) this.removeSelected(sel, true); else handled = false; break;
 			case "Delete":
 			case "Backspace": if (sel) this.removeSelected(sel, false); else handled = false; break;
@@ -998,9 +1031,9 @@ export class KanbanView extends TextFileView implements HoverParent {
 	}
 
 	/** Used by the agenda: show a board and highlight one card. */
-	focusCard(text: string): void {
+	focusCard(match: { text?: string; bid?: string }): void {
 		for (const lane of this.board.lanes) {
-			const card = lane.cards.find((c) => c.text === text);
+			const card = lane.cards.find((c) => (match.bid ? c.bid === match.bid : c.text === match.text));
 			if (!card) continue;
 			this.filterText = "";
 			this.quick = "";
@@ -1021,6 +1054,7 @@ export class KanbanView extends TextFileView implements HoverParent {
 	private cardMenu(lane: Lane, card: Card, e: MouseEvent): void {
 		const cur = parseCard(card.text).priority;
 		const menu = new Menu();
+		menu.addItem((i) => i.setTitle("Details").setIcon("info").onClick(() => this.openDetail(lane, card)));
 		menu.addItem((i) => i.setTitle("Edit").setIcon("pencil").onClick(() => this.openEdit(lane, card)));
 		menu.addSeparator();
 		(["high", "medium", "low"] as Priority[]).forEach((p) =>
@@ -1028,12 +1062,15 @@ export class KanbanView extends TextFileView implements HoverParent {
 		if (cur) menu.addItem((i) => i.setTitle("Clear priority").onClick(() => this.setPriority(card, undefined)));
 		menu.addSeparator();
 		menu.addItem((i) => i.setTitle("Duplicate").setIcon("copy").onClick(() => {
-			lane.cards.splice(lane.cards.indexOf(card) + 1, 0, { ...card, id: uid(), subs: card.subs.map((s) => ({ ...s })) });
+			const copy: Card = { ...card, id: uid(), bid: undefined, subs: card.subs.map((s) => ({ ...s })), log: [] };
+			logEvent(copy, "created", undefined, lane.title);
+			lane.cards.splice(lane.cards.indexOf(card) + 1, 0, copy);
 			this.commit();
 		}));
 		menu.addItem((i) => i.setTitle("Convert to note").setIcon("file-plus").onClick(() => void this.cardToNote(card)));
 		menu.addItem((i) => i.setTitle("Archive").setIcon("archive").onClick(() => {
 			lane.cards = lane.cards.filter((c) => c !== card);
+			logEvent(card, "archived", lane.title);
 			this.board.archive.push(card);
 			this.commit();
 		}));
@@ -1043,6 +1080,7 @@ export class KanbanView extends TextFileView implements HoverParent {
 			menu.addItem((i) => i.setTitle(`Move to ${other.title}`).setIcon("arrow-right").onClick(() => {
 				lane.cards = lane.cards.filter((c) => c !== card);
 				other.cards.push(card);
+				logEvent(card, "moved", lane.title, other.title);
 				this.handleRecurrence(other, card);
 				this.commit();
 			}));
@@ -1095,6 +1133,7 @@ export class KanbanView extends TextFileView implements HoverParent {
 				const target = this.board.lanes.find((l) => !this.isDone(l)) ?? this.board.lanes[0];
 				if (!target) { new Notice("Add a list first."); return; }
 				this.board.archive = this.board.archive.filter((x) => x !== c);
+				logEvent(c, "restored", undefined, target.title);
 				target.cards.push(c);
 				this.commit();
 			},
@@ -1165,6 +1204,7 @@ export class KanbanView extends TextFileView implements HoverParent {
 		if (i < lanes.length - 1) menu.addItem((m) => m.setTitle("Move right").setIcon("arrow-right").onClick(() => this.moveLane(lane.id, i + 1)));
 		menu.addSeparator();
 		if (lane.cards.length) menu.addItem((m) => m.setTitle("Archive all cards").setIcon("archive").onClick(() => {
+			lane.cards.forEach((c) => logEvent(c, "archived", lane.title));
 			this.board.archive.push(...lane.cards);
 			lane.cards = [];
 			this.commit();

@@ -2,14 +2,17 @@
 
 export type Priority = "high" | "medium" | "low";
 export interface Sub { text: string; done: boolean }
-export interface Card { id: string; text: string; checked: boolean; desc: string; subs: Sub[] }
+export interface LogEntry { ts: string; type: "created" | "moved" | "archived" | "restored"; from?: string; to?: string }
+/** `bid` is an optional block id (written as ` ^id` at the end of the line) so other tasks and notes can link to this task. */
+export interface Card { id: string; text: string; checked: boolean; desc: string; subs: Sub[]; bid?: string; log: LogEntry[] }
 export interface Lane { id: string; title: string; cards: Card[]; limit?: number; collapsed?: boolean; extra?: string }
 export interface Board { lanes: Lane[]; archive: Card[]; frontmatter?: string; preamble?: string; archiveExtra?: string }
 export interface CardInfo { title: string; date?: string; time?: string; priority?: Priority; repeat?: string; tags: string[]; contexts: string[] }
 
 let counter = 0;
 export const uid = (): string => `k${Date.now().toString(36)}${(counter++).toString(36)}`;
-export const newCard = (text: string, desc = "", subs: Sub[] = []): Card => ({ id: uid(), text, checked: false, desc, subs });
+export const newCard = (text: string, desc = "", subs: Sub[] = []): Card => ({ id: uid(), text, checked: false, desc, subs, log: [] });
+export const newBid = (): string => `kb${Math.random().toString(36).slice(2, 8)}`;
 
 export const DEFAULT_FRONTMATTER = "---\nkanban-plugin: board\n---\n";
 const FM_RE = /^---\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/;
@@ -78,11 +81,22 @@ export function parseBoard(content: string): Board {
 			if (/collapsed=1/.test(meta[1])) cur.collapsed = true;
 			continue;
 		}
+		const lg = /^(?:\t| {2,})<!--\s*kb\|(.*?)\s*-->\s*$/.exec(line);
+		if (lg && last) {
+			const [ts, type, from, to] = lg[1].split("|");
+			if (ts && ["created", "moved", "archived", "restored"].includes(type)) {
+				last.log.push({ ts, type: type as LogEntry["type"], from: from || undefined, to: to || undefined });
+			}
+			continue;
+		}
 		const sub = /^(?:\t| {2,})[-*]\s+\[([ xX])\]\s?(.*)$/.exec(line);
 		if (sub && last) { last.subs.push({ done: sub[1] !== " ", text: sub[2].trim() }); continue; }
 		const c = /^[-*]\s+\[([ xX])\]\s?(.*)$/.exec(line);
 		if (c && (cur || inArchive)) {
-			last = newCard(c[2].trim());
+			const raw = c[2].trim();
+			const idm = /\s\^([A-Za-z0-9-]+)$/.exec(raw);
+			last = newCard(idm ? raw.slice(0, idm.index).trim() : raw);
+			if (idm) last.bid = idm[1];
 			last.checked = c[1] !== " ";
 			(inArchive ? archive : cur!.cards).push(last);
 			continue;
@@ -107,9 +121,11 @@ export function parseBoard(content: string): Board {
 const oneLine = (s: string): string => s.replace(/\s*\n\s*/g, " ");
 
 function cardLines(c: Card): string {
-	let out = `- [${c.checked ? "x" : " "}] ${oneLine(c.text)}\n`;
+	let out = `- [${c.checked ? "x" : " "}] ${oneLine(c.text)}${c.bid ? ` ^${c.bid}` : ""}\n`;
 	for (const l of c.desc.split("\n")) if (l.trim()) out += `  ${l.trim()}\n`;
 	for (const s of c.subs) out += `  - [${s.done ? "x" : " "}] ${oneLine(s.text)}\n`;
+	const clean = (v?: string): string => (v ?? "").replace(/[|\r\n]/g, "/").replace(/-->/g, "->").trim();
+	for (const e of c.log) out += `  <!-- kb|${e.ts}|${e.type}|${clean(e.from)}|${clean(e.to)} -->\n`;
 	return out;
 }
 
@@ -146,6 +162,13 @@ const pad = (n: number): string => String(n).padStart(2, "0");
 export const isoDate = (d: Date): string => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 export const todayISO = (): string => isoDate(new Date());
 export const parseISO = (s: string): Date => { const [y, m, d] = s.split("-").map(Number); return new Date(y, m - 1, d); };
+
+/** Adds a history entry (kept to the first entry plus the 59 most recent). */
+export function logEvent(card: Card, type: LogEntry["type"], from?: string, to?: string): void {
+	const d = new Date();
+	card.log.push({ ts: `${isoDate(d)}T${pad(d.getHours())}:${pad(d.getMinutes())}`, type, from, to });
+	if (card.log.length > 60) card.log.splice(1, card.log.length - 60);
+}
 
 const PRIO_BY_ICON: Record<string, Priority> = { "⏫": "high", "🔼": "medium", "🔽": "low" };
 const PRIO_ICON: Record<Priority, string> = { high: "⏫", medium: "🔼", low: "🔽" };

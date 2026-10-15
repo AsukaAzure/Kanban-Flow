@@ -2,6 +2,8 @@ import { App, FuzzySuggestModal, Modal, Notice, TFile, setIcon } from "obsidian"
 import { Card, Priority, Sub, composeCard, extractSchedule, isoDate, nextRepeatDate, parseCard, takeTokens, todayISO } from "./parser";
 import type { TaskTemplate } from "./settings";
 
+export interface TaskRef { path: string; board: string; lane: string; title: string; text: string; bid?: string; cardId: string }
+
 export interface TaskData { laneId: string; text: string; desc: string; subs: Sub[] }
 
 export interface TaskModalOptions {
@@ -15,6 +17,7 @@ export interface TaskModalOptions {
 	sourcePath: string;
 	tags: string[];
 	contexts: string[];
+	onPickTask: (insert: (link: string) => void) => void;
 	templates: TaskTemplate[];
 	onSaveTemplate: (t: { name: string; text: string; desc: string; subs: Sub[] }) => void;
 	onSubmit: (data: TaskData) => void;
@@ -126,6 +129,7 @@ export class TaskModal extends Modal {
 			return b;
 		};
 		const linkBtn = iconBtn("link", "Link a note", "Note");
+		const taskBtn = iconBtn("link-2", "Link a task", "Task");
 		const siteBtn = iconBtn("globe", "Link a website", "Web");
 		const tplBtn = iconBtn("bookmark", "Save as template", "Tpl");
 
@@ -309,6 +313,13 @@ export class TaskModal extends Modal {
 				ta.dispatchEvent(new Event("input"));
 			}).open();
 		};
+		taskBtn.onclick = () => {
+			opts.onPickTask((link) => {
+				ta.setRangeText(link, ta.selectionStart, ta.selectionEnd, "end");
+				ta.focus();
+				ta.dispatchEvent(new Event("input"));
+			});
+		};
 		siteBtn.onclick = () => {
 			new UrlModal(this.app, (url, label) => {
 				const link = label ? `[${label}](${url})` : url;
@@ -335,6 +346,16 @@ export class NoteSuggestModal extends FuzzySuggestModal<TFile> {
 	getItems(): TFile[] { return this.app.vault.getMarkdownFiles(); }
 	getItemText(f: TFile): string { return f.path; }
 	onChooseItem(f: TFile): void { this.onChoose(f); }
+}
+
+export class TaskPickerModal extends FuzzySuggestModal<TaskRef> {
+	constructor(app: App, private refs: TaskRef[], private onChoose: (r: TaskRef) => void) {
+		super(app);
+		this.setPlaceholder("Link to a task…");
+	}
+	getItems(): TaskRef[] { return this.refs; }
+	getItemText(r: TaskRef): string { return `${r.title}  ·  ${r.board} / ${r.lane}`; }
+	onChooseItem(r: TaskRef): void { this.onChoose(r); }
 }
 
 export class ConfirmModal extends Modal {
@@ -443,7 +464,8 @@ export class ShortcutsModal extends Modal {
 			["/", "Go to the filter box"],
 			["B  /  C", "Board view  /  Calendar view"],
 			["↑ ↓ ← →", "Select a card"],
-			["Enter  or  E", "Edit the selected card"],
+			["Enter", "Open the selected card's details"],
+			["E", "Edit the selected card"],
 			["1  2  3", "Set priority high / medium / low"],
 			["0", "Clear priority"],
 			["A", "Archive the selected card"],

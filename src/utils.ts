@@ -1,4 +1,6 @@
-import { setIcon } from "obsidian";
+import { moment, setIcon } from "obsidian";
+import type { CardInfo } from "./parser";
+import { todayISO } from "./parser";
 import type { KanbanSettings } from "./settings";
 
 /** Shows a tag in its chosen colour (soft background, coloured text). */
@@ -20,4 +22,30 @@ export function iconButton(parent: HTMLElement, name: string, label: string, fal
 	const b = parent.createEl("button", { cls, attr: { "aria-label": label, title: label } });
 	iconText(b, name, fallback);
 	return b;
+}
+
+const nowHM = (): string => {
+	const d = new Date();
+	return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+};
+
+export function isOverdue(info: CardInfo): boolean {
+	if (!info.date) return false;
+	const t = todayISO();
+	return info.date < t || (info.date === t && !!info.time && info.time < nowHM());
+}
+
+export function formatTime(time: string, s: KanbanSettings): string {
+	return moment(time, "HH:mm").format(s.timeFormat === "12h" ? "h:mm A" : "HH:mm");
+}
+
+export function formatDue(date: string, time: string | undefined, s: KanbanSettings): string {
+	const diff = moment(date, "YYYY-MM-DD").diff(moment().startOf("day"), "days");
+	let label = moment(date, "YYYY-MM-DD").format(s.dateFormat);
+	if (s.relativeDates) {
+		if (diff === 0) label = "Today";
+		else if (diff === 1) label = "Tomorrow";
+		else if (diff === -1) label = "Yesterday";
+	}
+	return time ? `${label}, ${formatTime(time, s)}` : label;
 }

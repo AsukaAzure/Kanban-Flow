@@ -1,8 +1,7 @@
 import { ItemView, TAbstractFile, TFile, WorkspaceLeaf } from "obsidian";
 import type KanbanFlowPlugin from "./main";
 import { Card, CardInfo, isBoard, isoDate, parseBoard, parseCard, todayISO } from "./parser";
-import { formatDue, isOverdue } from "./view";
-import { applyTagColor, iconButton, iconText } from "./utils";
+import { applyTagColor, formatDue, iconButton, iconText, isOverdue } from "./utils";
 
 export const AGENDA_TYPE = "kanban-flow-agenda";
 
@@ -171,6 +170,6 @@ export class AgendaView extends ItemView {
 			const overdue = !it.done && isOverdue(it.info);
 			row.createDiv({ cls: overdue ? ["kb-ag-due", "is-overdue"] : ["kb-ag-due"], text: formatDue(it.info.date, it.info.time, s) });
 		}
-		row.onclick = () => void this.plugin.openBoardAt(it.path, it.card.text);
+		row.onclick = () => void this.plugin.openBoardAt(it.path, { text: it.card.text });
 	}
 }
